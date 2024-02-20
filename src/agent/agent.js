@@ -1,5 +1,6 @@
 import { History } from './history.js';
 import { Coder } from './coder.js';
+import { Tasker } from './tasker.js';
 import { initModes } from './modes.js';
 import { Examples } from '../utils/examples.js';
 import { initBot } from '../utils/mcdata.js';
@@ -13,12 +14,14 @@ export class Agent {
         this.examples = new Examples();
         this.history = new History(this);
         this.coder = new Coder(this);
+        this.tasker = new Tasker(this);
 
         console.log('Loading examples...');
 
         this.history.load(profile);
         await this.examples.load('./src/examples.json');
         await this.coder.load();
+        await this.tasker.load();
 
         console.log('Logging in...');
         this.bot = initBot(name);
@@ -94,7 +97,9 @@ export class Agent {
             return;
         }
 
-        for (let i=0; i<5; i++) {
+        let history = await this.history.getHistory(this.examples);
+        this.tasker.createTask(history);
+        /*for (let i=0; i<5; i++) {
             let history = await this.history.getHistory(this.examples);
             let res = await sendRequest(history, this.history.getSystemMessage());
             this.history.add(this.name, res);
@@ -126,9 +131,9 @@ export class Agent {
                 console.log('Purely conversational response:', res);
                 break;
             }
-        }
+        }*/
 
-        this.history.save();
+        //this.history.save();
         this.bot.emit('finished_executing');
     }
 
