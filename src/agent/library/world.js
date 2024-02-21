@@ -163,6 +163,11 @@ export function getInventoryCounts(bot) {
      * let oakLogCount = inventory['oak_log'];
      * let hasWoodenPickaxe = inventory['wooden_pickaxe'] > 0;
      **/
+    if (!bot.inventory) {
+        console.log("Tried to getInventoryCounts, but the bot has no .inventory");
+        return;
+    }
+
     let inventory = {};
     for (const item of bot.inventory.items()) {
         if (item != null) {

@@ -4,13 +4,27 @@ import { Examples } from '../utils/examples.js';
 import taskerPrompt from './taskerPrompt.js';
 import { containsCommand, commandExists, executeCommand } from './commands/index.js';
 
+function flipRoles(data) {
+    const newData = data.map(item => {
+    if (item.role === 'user') {
+        return { role: 'assistant', content: item.content };
+    } else if (item.role === 'assistant') {
+        return { role: 'user', content: item.content };
+    } else {
+        return item;
+    }
+    });
+    
+    return newData;
+}
 
 export class Tasker {
     constructor(agent) {
         this.agent = agent;
         this.turns = [];
+        this.generatingTasks = false;
 
-        this.max_messages = 30;
+        this.max_messages = 80;
     }
 
     async load() {
@@ -28,31 +42,53 @@ export class Tasker {
     }
 
     async createTask(history) {
-        let res = await sendRequest(history, taskerPrompt.GenerateTaskPrompt); // this.history.getSystemMessage()
-        console.log('-------- RES RESPONSE:', res);
-        console.log('--------');
+        if(this.generatingTasks)
+        {
+            console.log("Trying to start task when task is already running");
+            return;
+        }
 
-        // Split the list into an array
-        //const stepsArray = res.split('\n');
-        const stepsArray = res.split(/\s*\n\s*/);
-        const goal = stepsArray[0];
+        this.clear();
 
+        let goal = await sendRequest(history, taskerPrompt.GenerateTaskGoal);
+        if(!goal) {
+            this.agent.bot.chat(`Error when generating task goal.`);
+            return;
+        }
+        if(goal.slice(0, 5).toLocaleUpperCase() == "BREAK") {
+            console.log("Goal got stopped by BREAK!");
+            this.agent.cleanChat(`I don't want to do this task`);
+            return;
+        }
         this.agent.history.add(this.agent.name, goal);
-        this.add('system', goal)
+        this.add('system', `${goal} - Originating from the message "${history[history.length-1].content}"`); // Passing the original message may screw up AddToTasks prompt
+        console.log('TASK Goal:', goal);
 
-        let i = 1;
-        if (stepsArray.length == 1)
-            i = 0;
-        while (i < stepsArray.length) {
-            const step = stepsArray[i];
+        const maxIterations = 12;
+        let i = 0;
+        this.generatingTasks = true;
+        while (this.generatingTasks) {
             
-            this.add("user", step)
-            //console.log(`Step ${i+1}: ${step}`);
+            let task = await sendRequest(this.turns, taskerPrompt.AddToTasks); // Ultimately this should generate the commands directly rather than a separate GPT
+            this.add("assistant", task);
+            if(task.slice(0, 4).toLocaleUpperCase() == "DONE") {
+                console.log("Task is DONE!");
+                this.agent.cleanChat(`I finished the task!`);
+                break;
+            }
+            if(task.slice(0, 5).toLocaleUpperCase() == "BREAK") {
+                console.log("Task got stopped by BREAK!");
+                this.agent.cleanChat(`Stopping this task as it got too sidetracked`);
+                break;
+            }
+            console.log('TASK Task:', task);
+            
 
-
-
-            let res = await sendRequest(this.turns, this.agent.history.getSystemMessage());
-            this.add('assistant', res);
+            let flippedTurns = flipRoles(this.turns);
+            //console.log("--------------------------TURNS TURNS TURNS TURNS");
+            //console.log(flippedTurns);
+            let res = await sendRequest(flippedTurns, this.agent.history.getSystemMessage());
+            console.log('TASK Res:', res);
 
             let command_name = containsCommand(res);
 
@@ -60,7 +96,7 @@ export class Tasker {
                 console.log('Command message:', res);
                 if (!commandExists(command_name)) {
                     this.add('system', `Command ${command_name} does not exist. Use !newAction to perform custom actions.`);
-                    console.log('Agent hallucinated command:', command_name)
+                    console.log('Agent hallucinated command:', command_name);
                     continue;
                 }
 
@@ -72,35 +108,46 @@ export class Tasker {
                 console.log('Agent executed:', command_name, 'and got:', execute_res);
 
                 if (execute_res)
-                    this.add('assistant', execute_res);
+                {
+                    this.add('user', `${res}`);
+                    this.add('system', `The command returned: ${execute_res}`);
+                }
                 else
-                    break;
+                {
+                    console.log('No return value when executing command', res);
+                    this.add('user', `Failure when running command: ${command_name}`);
+                }
             }
             else { // conversation response
-                this.agent.cleanChat(res);
-                console.log('Purely conversational response:', res);
-                break;
+                this.agent.cleanChat(`${res}`);
+                this.add('user', res);
             }
-            
-
-            // TODO: Check if it should update the task list
-            
 
             i++;
+            if(i > maxIterations)
+                break;
         }
+        console.log(this.turns);
+        this.clear();
 
-        this.clear()
+        this.agent.cleanChat(`Finished the task: "${goal}"`);
     }
 
     async add(role, content) {
         this.turns.push({role, content});
 
         if (this.turns.length >= this.max_messages) {
-            this.turns.shift();
+            console.log("TASKER MAX MESSAGES REACHED");
+            this.turns.shift(); // TODO: This will remove the system message. It should only remove user/assistant messages.
         }
     }
 
     async clear() {
         this.turns.length = 0;
+        this.generatingTasks = false;
+    }
+
+    async stop() {
+        this.clear();
     }
 }

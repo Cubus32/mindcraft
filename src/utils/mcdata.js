@@ -43,11 +43,17 @@ export function isHostile(mob) {
 }
 
 export function getItemId(item) {
-    return mcdata.itemsByName[item].id;
+    let thisItem = mcdata.itemsByName[item]
+    if (!thisItem)
+        return `There is no item by the name ${item}`
+    return thisItem.id;
 }
 
 export function getItemName(itemId) {
-    return mcdata.items[itemId].name;
+    let thisItem = mcdata.items[itemId];
+    if (!thisItem)
+        return null;
+    return thisItem.name;
 }
 
 export function getAllItems(ignore) {
@@ -98,4 +104,32 @@ export function getAllBlockIds(ignore) {
 
 export function getAllBiomes() {
     return mcdata.biomes;
+}
+
+export function getItemCraftingRecipes(itemName) {
+    let itemId = getItemId(itemName);
+    if (!mcdata.recipes[itemId]) {
+        return null;
+    }
+
+    let recipes = [];
+    for (let r of mcdata.recipes[itemId]) {
+        let recipe = {};
+        let ingredients = [];
+        if (r.ingredients) {
+            ingredients = r.ingredients;
+        } else if (r.inShape) {
+            ingredients = r.inShape.flat();
+        }
+        for (let ingredient of ingredients) {
+            let ingredientName = getItemName(ingredient);
+            if (ingredientName === null) continue;
+            if (!recipe[ingredientName])
+                recipe[ingredientName] = 0;
+            recipe[ingredientName]++;
+        }
+        recipes.push(recipe);
+    }
+
+    return recipes;
 }

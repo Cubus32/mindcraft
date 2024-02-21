@@ -38,7 +38,8 @@ export class Agent {
                 "Set the difficulty to",
                 "Teleported ",
                 "Set the weather to",
-                "Gamerule "
+                "Gamerule ",
+                "Removed " // clear inventory
             ];
             this.bot.on('chat', (username, message) => {
                 if (username === this.name) return;
@@ -165,6 +166,7 @@ export class Agent {
         this.bot.on('death', () => {
             this.coder.cancelResume();
             this.coder.stop();
+            this.tasker.stop();
         });
         this.bot.on('kicked', (reason) => {
             console.warn('Bot kicked!', reason);

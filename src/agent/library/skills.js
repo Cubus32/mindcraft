@@ -37,6 +37,8 @@ async function equipHighestAttack(bot) {
     let weapon = weapons[0];
     if (weapon)
         await bot.equip(weapon, 'hand');
+
+    log(bot, `Equipped ${weapon}`);
 }
 
 
@@ -45,21 +47,28 @@ export async function craftRecipe(bot, itemName) {
      * Attempt to craft the given item name from a recipe. May craft many items.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} itemName, the item name to craft.
-     * @returns {Promise<boolean>} true if the recipe was crafted, false otherwise.
+     * @returns {Promise<string>} true if the recipe was crafted, false otherwise.
      * @example
      * await skills.craftRecipe(bot, "stick");
      **/
     let placedTable = false;
-
-    // get recipes that don't require a crafting table
-    let recipes = bot.recipesFor(mc.getItemId(itemName), null, 1, null); 
+    
+    // Get recipes that don't require a crafting table
+    let itemID = mc.getItemId(itemName);
+    let recipes = bot.recipesFor(itemID, null, 1, null); // Recipes that can currently be crafted
+    let allRecipes = mc.getItemCraftingRecipes(itemName); // All recipes to craft the item
+    //console.log("--------- ALL RECIPES");
+    //console.log(allRecipes);
+    //console.log("--------- FIRST RECIPE");
+    //console.log(allRecipes[0]);
+    if(!allRecipes || allRecipes.length === 0)
+        return `Unable to find recipes related to ${itemName}.`;
     let craftingTable = null;
+    // If the recipe isn't craftable from inventory
     if (!recipes || recipes.length === 0) {
-
         // Look for crafting table
         craftingTable = world.getNearestBlock(bot, 'crafting_table', 6);
-        if (craftingTable === null){
-
+        if (craftingTable === null) {
             // Try to place crafting table
             let hasTable = world.getInventoryCounts(bot)['crafting_table'] > 0;
             if (hasTable) {
@@ -67,35 +76,63 @@ export async function craftRecipe(bot, itemName) {
                 await placeBlock(bot, 'crafting_table', pos.x, pos.y, pos.z);
                 craftingTable = world.getNearestBlock(bot, 'crafting_table', 6);
                 if (craftingTable) {
-                    recipes = bot.recipesFor(mc.getItemId(itemName), null, 1, craftingTable);
+                    recipes = bot.recipesFor(itemID, null, 1, craftingTable);
                     placedTable = true;
+                } else {
+                    return `You for some reason couldn't place down the crafting table in your inventory`;
                 }
+            } else {
+                // You're either missing ingredients, or you don't have a crafting table.
+                const missing = missingIngredients(bot, allRecipes[0]); // TODO: Not optimal to always take index 0. Might want to search for the closest to being able to craft recipe.
+                if(missing)
+                    return `You're missing the ingredients: ${JSON.stringify(missing)}`;
+                else
+                    return `You're missing a crafting table.`;
             }
-            else {
-                log(bot, `You either do not have enough resources to craft ${itemName} or it requires a crafting table.`)
-                return false;
-            }
-        }
-        else {
-            recipes = bot.recipesFor(mc.getItemId(itemName), null, 1, craftingTable);
+        } else {
+            recipes = bot.recipesFor(itemID, null, 1, craftingTable);
         }
     }
+    
+    // Update recipes after finding crafting table
     if (!recipes || recipes.length === 0) {
-        log(bot, `You do not have the resources to craft a ${itemName}.`);
         if (placedTable) {
-            await collectBlock(bot, 'crafting_table', 1);
+             await collectBlock(bot, 'crafting_table', 1);
         }
-        return false;
+        const missing = missingIngredients(bot, allRecipes[0]); // TODO: Not optimal to always take index 0. Might want to search for the closest to being able to craft recipe.
+        if(missing)
+            return `You're missing the ingredients: ${JSON.stringify(missing)}`;
+        else
+            return `You do not have the resources to craft a ${itemName}.`;
     }
-
+    
     const recipe = recipes[0];
     console.log('crafting...');
     await bot.craft(recipe, 1, craftingTable);
-    log(bot, `Successfully crafted ${itemName}, you now have ${world.getInventoryCounts(bot)[itemName]} ${itemName}.`);
+    
     if (placedTable) {
         await collectBlock(bot, 'crafting_table', 1);
     }
-    return true;
+    return `Successfully crafted ${itemName}.`; //, you now have ${world.getInventoryCounts(bot)[itemName]} ${itemName}
+}
+
+function missingIngredients(bot, recipe) {
+    const inventory = world.getInventoryCounts(bot);
+    const missing = [];
+
+    if (!recipe) {
+        console.log("There is no recipe");
+        return null;
+    }
+
+    for (const ingredient in recipe) {
+        //console.log(`Looking at ingredient ${ingredient}. Inventory has ${inventory[ingredient]} while recipe needs ${recipe[ingredient]} which is ${inventory[ingredient] < recipe[ingredient]}`);
+        if (!inventory[ingredient] || inventory[ingredient] < recipe[ingredient]) {
+            missing.push(ingredient);
+        }
+    }
+
+    return missing.length > 0 ? missing : null;
 }
 
 
@@ -105,22 +142,20 @@ export async function smeltItem(bot, itemName, num=1) {
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} itemName, the item name to smelt. Ores must contain "raw" like raw_iron.
      * @param {number} num, the number of items to smelt. Defaults to 1.
-     * @returns {Promise<boolean>} true if the item was smelted, false otherwise. Fail
+     * @returns {Promise<string>} true if the item was smelted, false otherwise. Fail
      * @example
      * await skills.smeltItem(bot, "raw_iron");
      * await skills.smeltItem(bot, "beef");
      **/
     const foods = ['beef', 'chicken', 'cod', 'mutton', 'porkchop', 'rabbit', 'salmon', 'tropical_fish'];
     if (!itemName.includes('raw') && !foods.includes(itemName)) {
-        log(bot, `Cannot smelt ${itemName}, must be a "raw" item, like "raw_iron".`);
-        return false;
+        return `Cannot smelt ${itemName}. Must be a "raw" item, like "raw_iron".`;
     } // TODO: allow cobblestone, sand, clay, etc.
 
     let furnaceBlock = undefined;
     furnaceBlock = world.getNearestBlock(bot, 'furnace', 6);
     if (!furnaceBlock){
-        log(bot, `There is no furnace nearby.`)
-        return false;
+        return `There is no furnace nearby.`;
     }
     await bot.lookAt(furnaceBlock.position);
 
@@ -131,14 +166,12 @@ export async function smeltItem(bot, itemName, num=1) {
     if (input_item && input_item.type !== mc.getItemId(itemName) && input_item.count > 0) {
         // TODO: check if furnace is currently burning fuel. furnace.fuel is always null, I think there is a bug.
         // This only checks if the furnace has an input item, but it may not be smelting it and should be cleared.
-        log(bot, `The furnace is currently smelting ${mc.getItemName(input_item.type)}.`);
-        return false;
+        return `The furnace is currently smelting ${mc.getItemName(input_item.type)}.`;
     }
     // check if the bot has enough items to smelt
     let inv_counts = world.getInventoryCounts(bot);
     if (!inv_counts[itemName] || inv_counts[itemName] < num) {
-        log(bot, `You do not have enough ${itemName} to smelt.`);
-        return false;
+        return `You do not have enough ${itemName} to smelt.`;
     }
 
     // fuel the furnace
@@ -146,8 +179,7 @@ export async function smeltItem(bot, itemName, num=1) {
         let fuel = bot.inventory.items().find(item => item.name === 'coal' || item.name === 'charcoal');
         let put_fuel = Math.ceil(num / 8);
         if (!fuel || fuel.count < put_fuel) {
-            log(bot, `You do not have enough coal or charcoal to smelt ${num} ${itemName}, you need ${put_fuel} coal or charcoal`);
-            return false;
+            return `You do not have enough coal or charcoal to smelt ${num} ${itemName}, you need ${put_fuel} coal or charcoal`;
         }
         await furnace.putFuel(fuel.type, null, put_fuel);
         log(bot, `Added ${put_fuel} ${mc.getItemName(fuel.type)} to furnace fuel.`);
@@ -181,29 +213,25 @@ export async function smeltItem(bot, itemName, num=1) {
     }
 
     if (total === 0) {
-        log(bot, `Failed to smelt ${itemName}.`);
-        return false;
+        return `Failed to smelt ${itemName}.`;
     }
     if (total < num) {
-        log(bot, `Only smelted ${total} ${mc.getItemName(smelted_item.type)}.`);
-        return false;
+        return `Only smelted ${total} ${mc.getItemName(smelted_item.type)}.`;
     }
-    log(bot, `Successfully smelted ${itemName}, got ${total} ${mc.getItemName(smelted_item.type)}.`);
-    return true;
+    return `Successfully smelted ${itemName}, got ${total} ${mc.getItemName(smelted_item.type)}.`;
 }
 
 export async function clearNearestFurnace(bot) {
     /**
      * Clears the nearest furnace of all items.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @returns {Promise<boolean>} true if the furnace was cleared, false otherwise.
+     * @returns {Promise<string>} true if the furnace was cleared, false otherwise.
      * @example
      * await skills.clearNearestFurnace(bot);
      **/
     let furnaceBlock = world.getNearestBlock(bot, 'furnace', 6); 
     if (!furnaceBlock){
-        log(bot, `There is no furnace nearby.`)
-        return false;
+        return `There is no furnace nearby.`;
     }
 
     console.log('clearing furnace...');
@@ -221,8 +249,7 @@ export async function clearNearestFurnace(bot) {
     let smelted_name = smelted_item ? `${smelted_item.count} ${smelted_item.name}` : `0 smelted items`;
     let input_name = intput_item ? `${intput_item.count} ${intput_item.name}` : `0 input items`;
     let fuel_name = fuel_item ? `${fuel_item.count} ${fuel_item.name}` : `0 fuel items`;
-    log(bot, `Cleared furnace, recieved ${smelted_name}, ${input_name}, and ${fuel_name}.`);
-    return true;
+    return `Cleared furnace, recieved ${smelted_name}, ${input_name}, and ${fuel_name}.`;
 
 }
 
@@ -233,7 +260,7 @@ export async function attackNearest(bot, mobType, kill=true) {
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} mobType, the type of mob to attack.
      * @param {boolean} kill, whether or not to continue attacking until the mob is dead. Defaults to true.
-     * @returns {Promise<boolean>} true if the mob was attacked, false if the mob type was not found.
+     * @returns {Promise<string>} true if the mob was attacked, false if the mob type was not found.
      * @example
      * await skills.attackNearest(bot, "zombie", true);
      **/
@@ -241,8 +268,7 @@ export async function attackNearest(bot, mobType, kill=true) {
     if (mob) {
         return await attackEntity(bot, mob, kill);
     }
-    log(bot, 'Could not find any '+mobType+' to attack.');
-    return false;
+    return `Could not find any ${mobType} to attack.`;
 }
 
 export async function attackEntity(bot, entity, kill=true) {
@@ -250,7 +276,7 @@ export async function attackEntity(bot, entity, kill=true) {
      * Attack mob of the given type.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {Entity} entity, the entity to attack.
-     * @returns {Promise<boolean>} true if the entity was attacked, false if interrupted
+     * @returns {Promise<string>} true if the entity was attacked, false if interrupted
      * @example
      * await skills.attackEntity(bot, entity);
      **/
@@ -277,9 +303,8 @@ export async function attackEntity(bot, entity, kill=true) {
                 return false;
             }
         }
-        log(bot, `Successfully killed ${entity.name}.`);
         await pickupNearbyItems(bot);
-        return true;
+        return `Successfully killed ${entity.name}.`;
     }
 }
 
@@ -288,7 +313,7 @@ export async function defendSelf(bot, range=9) {
      * Defend yourself from all nearby hostile mobs until there are no more.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {number} range, the range to look for mobs. Defaults to 8.
-     * @returns {Promise<boolean>} true if the bot found any enemies and has killed them, false if no entities were found.
+     * @returns {Promise<string>} true if the bot found any enemies and has killed them, false if no entities were found.
      * @example
      * await skills.defendSelf(bot);
      * **/
@@ -309,15 +334,14 @@ export async function defendSelf(bot, range=9) {
         enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
         if (bot.interrupt_code) {
             bot.pvp.stop();
-            return false;
+            return `Unsuccessful`;
         }
     }
     bot.pvp.stop();
     if (attacked)
-        log(bot, `Successfully defended self.`);
+        return `Successfully defended self.`;
     else
-        log(bot, `No enemies nearby to defend self from.`);
-    return attacked;
+        return `No enemies nearby to defend self from.`;
 }
 
 
@@ -328,13 +352,12 @@ export async function collectBlock(bot, blockType, num=1) {
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} blockType, the type of block to collect.
      * @param {number} num, the number of blocks to collect. Defaults to 1.
-     * @returns {Promise<boolean>} true if the block was collected, false if the block type was not found.
+     * @returns {Promise<string>} true if the block was collected, false if the block type was not found.
      * @example
      * await skills.collectBlock(bot, "oak_log");
      **/
     if (num < 1) {
-        log(bot, `Invalid number of blocks to collect: ${num}.`);
-        return false;
+        return `Invalid number of blocks to collect: ${num}.`;
     }
     let blocktypes = [blockType];
     if (blockType.endsWith('ore'))
@@ -356,7 +379,7 @@ export async function collectBlock(bot, blockType, num=1) {
         const itemId = bot.heldItem ? bot.heldItem.type : null
         if (!block.canHarvest(itemId)) {
             log(bot, `Don't have right tools to harvest ${blockType}.`);
-            return false;
+            return "Failed to collect blocks.";
         }
         try {
             await bot.collectBlock.collect(block);
@@ -377,15 +400,16 @@ export async function collectBlock(bot, blockType, num=1) {
         if (bot.interrupt_code)
             break;  
     }
-    log(bot, `Collected ${collected} ${blockType}.`);
-    return collected > 0;
+    if(collected == 0)
+        return "Failed to collect blocks.";
+    return `Collected ${collected} ${blockType}.`;
 }
 
 export async function pickupNearbyItems(bot) {
     /**
      * Pick up all nearby items.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @returns {Promise<boolean>} true if the items were picked up, false otherwise.
+     * @returns {Promise<string>} true if the items were picked up, false otherwise.
      * @example
      * await skills.pickupNearbyItems(bot);
      **/
@@ -404,8 +428,7 @@ export async function pickupNearbyItems(bot) {
         }
         pickedUp++;
     }
-    log(bot, `Picked up ${pickedUp} items.`);
-    return true;
+    return `Picked up ${pickedUp} items.`;
 }
 
 
@@ -416,7 +439,7 @@ export async function breakBlockAt(bot, x, y, z) {
      * @param {number} x, the x coordinate of the block to break.
      * @param {number} y, the y coordinate of the block to break.
      * @param {number} z, the z coordinate of the block to break.
-     * @returns {Promise<boolean>} true if the block was broken, false otherwise.
+     * @returns {Promise<string>} true if the block was broken, false otherwise.
      * @example
      * let position = world.getPosition(bot);
      * await skills.breakBlockAt(bot, position.x, position.y - 1, position.x);
@@ -435,17 +458,14 @@ export async function breakBlockAt(bot, x, y, z) {
         await bot.tool.equipForBlock(block);
         const itemId = bot.heldItem ? bot.heldItem.type : null
         if (!block.canHarvest(itemId)) {
-            log(bot, `Don't have right tools to break ${block.name}.`);
-            return false;
+            return `Don't have right tools to break ${block.name}.`;
         }
         await bot.dig(block, true);
-        log(bot, `Broke ${block.name} at x:${x.toFixed(1)}, y:${y.toFixed(1)}, z:${z.toFixed(1)}.`);
+        return `Broke ${block.name} at x:${x.toFixed(1)}, y:${y.toFixed(1)}, z:${z.toFixed(1)}.`;
     }
     else {
-        log(bot, `Skipping block at x:${x.toFixed(1)}, y:${y.toFixed(1)}, z:${z.toFixed(1)} because it is ${block.name}.`);
-        return false;
+        return `Skipping block at x:${x.toFixed(1)}, y:${y.toFixed(1)}, z:${z.toFixed(1)} because it is ${block.name}.`;
     }
-    return true;
 }
 
 
@@ -457,7 +477,7 @@ export async function placeBlock(bot, blockType, x, y, z) {
      * @param {number} x, the x coordinate of the block to place.
      * @param {number} y, the y coordinate of the block to place.
      * @param {number} z, the z coordinate of the block to place.
-     * @returns {Promise<boolean>} true if the block was placed, false otherwise.
+     * @returns {Promise<string>} true if the block was placed, false otherwise.
      * @example
      * let position = world.getPosition(bot);
      * await skills.placeBlock(bot, "oak_log", position.x + 1, position.y - 1, position.x);
@@ -466,8 +486,7 @@ export async function placeBlock(bot, blockType, x, y, z) {
     const empty_blocks = ['air', 'water', 'lava', 'grass', 'tall_grass', 'snow', 'dead_bush', 'fern'];
     const targetBlock = bot.blockAt(target_dest);
     if (!empty_blocks.includes(targetBlock.name)) {
-        log(bot, `Cannot place block at ${targetBlock.position} because ${targetBlock.name} is in the way.`);
-        return false;
+        return `Cannot place block at ${targetBlock.position} because ${targetBlock.name} is in the way.`;
     }
     // get the buildoffblock and facevec based on whichever adjacent block is not empty
     let buildOffBlock = null;
@@ -482,14 +501,12 @@ export async function placeBlock(bot, blockType, x, y, z) {
         }
     }
     if (!buildOffBlock) {
-        log(bot, `Cannot place ${blockType} at ${targetBlock.position}: nothing to place on.`);
-        return false;
+        return `Cannot place ${blockType} at ${targetBlock.position}: nothing to place on.`;
     }
 
     let block = bot.inventory.items().find(item => item.name === blockType);
     if (!block) {
-        log(bot, `Don't have any ${blockType} to place.`);
-        return false;
+        return `Don't have any ${blockType} to place.`;
     }
     const pos = bot.entity.position;
     const pos_above = pos.plus(Vec3(0,1,0));
@@ -514,12 +531,10 @@ export async function placeBlock(bot, blockType, x, y, z) {
     // will throw error if an entity is in the way, and sometimes even if the block was placed
     try {
         await bot.placeBlock(buildOffBlock, faceVec);
-        log(bot, `Successfully placed ${blockType} at ${target_dest}.`);
         await new Promise(resolve => setTimeout(resolve, 200));
-        return true;
+        return `Successfully placed ${blockType} at ${target_dest}.`;
     } catch (err) {
-        log(bot, `Failed to place ${blockType} at ${target_dest}.`);
-        return false;
+        return `Failed to place ${blockType} at ${target_dest}.`;
     }
 }
 
@@ -529,18 +544,17 @@ export async function equip(bot, itemName, bodyPart) {
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} itemName, the item or block name to equip.
      * @param {string} bodyPart, the body part to equip the item to.
-     * @returns {Promise<boolean>} true if the item was equipped, false otherwise.
+     * @returns {Promise<string>} true if the item was equipped, false otherwise.
      * @example
      * await skills.equip(bot, "iron_pickaxe", "hand");
      * await skills.equip(bot, "diamond_chestplate", "torso");
      **/
     let item = bot.inventory.items().find(item => item.name === itemName);
     if (!item) {
-        log(bot, `You do not have any ${itemName} to equip.`);
-        return false;
+        return `You do not have any ${itemName} to equip.`;
     }
     await bot.equip(item, bodyPart);
-    return true;
+    return `You equipped ${itemName}.`;
 }
 
 export async function discard(bot, itemName, num=-1) {
@@ -549,7 +563,7 @@ export async function discard(bot, itemName, num=-1) {
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} itemName, the item or block name to discard.
      * @param {number} num, the number of items to discard. Defaults to -1, which discards all items.
-     * @returns {Promise<boolean>} true if the item was discarded, false otherwise.
+     * @returns {Promise<string>} true if the item was discarded, false otherwise.
      * @example
      * await skills.discard(bot, "oak_log");
      **/
@@ -567,11 +581,9 @@ export async function discard(bot, itemName, num=-1) {
         }
     }
     if (discarded === 0) {
-        log(bot, `You do not have any ${itemName} to discard.`);
-        return false;
+        return `Failed to discart ${itemName}.`;
     }
-    log(bot, `Successfully discarded ${discarded} ${itemName}.`);
-    return true;
+    return `Successfully discarded ${discarded} ${itemName}.`;
 }
 
 export async function eat(bot, foodName="") {
@@ -579,7 +591,7 @@ export async function eat(bot, foodName="") {
      * Eat the given item. If no item is given, it will eat the first food item in the bot's inventory.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} item, the item to eat.
-     * @returns {Promise<boolean>} true if the item was eaten, false otherwise.
+     * @returns {Promise<string>} true if the item was eaten, false otherwise.
      * @example
      * await skills.eat(bot, "apple");
      **/
@@ -593,13 +605,11 @@ export async function eat(bot, foodName="") {
         name = "food";
     }
     if (!item) {
-        log(bot, `You do not have any ${name} to eat.`);
-        return false;
+        return `You do not have any ${name} to eat.`;
     }
     await bot.equip(item, 'hand');
     await bot.consume();
-    log(bot, `Successfully ate ${item.name}.`);
-    return true;
+    return `Successfully ate ${item.name}.`;
 }
 
 
@@ -610,19 +620,20 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
      * @param {string} itemType, the name of the item to give.
      * @param {string} username, the username of the player to give the item to.
      * @param {number} num, the number of items to give. Defaults to 1.
-     * @returns {Promise<boolean>} true if the item was given, false otherwise.
+     * @returns {Promise<string>} true if the item was given, false otherwise.
      * @example
      * await skills.giveToPlayer(bot, "oak_log", "player1");
      **/
     let player = bot.players[username].entity
     if (!player){
-        log(bot, `Could not find ${username}.`);
-        return false;
+        return `Could not find player: ${username}.`;
     }
     await goToPlayer(bot, username);
     await bot.lookAt(player.position);
-    discard(bot, itemType, num);
-    return true;
+    let discardReturn = await discard(bot, itemType, num);
+    if (discardReturn.charAt(0) == "F")
+        return `Failed to give ${username} ${itemType}`
+    return `Gave ${username} ${num} ${itemType}`;
 }
 
 
@@ -634,7 +645,7 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
      * @param {number} y, the y coordinate to navigate to. If null, the bot's current y coordinate will be used.
      * @param {number} z, the z coordinate to navigate to. If null, the bot's current z coordinate will be used.
      * @param {number} distance, the distance to keep from the position. Defaults to 2.
-     * @returns {Promise<boolean>} true if the position was reached, false otherwise.
+     * @returns {Promise<string>} true if the position was reached, false otherwise.
      * @example
      * let position = world.world.getNearestBlock(bot, "oak_log", 64).position;
      * await skills.goToPosition(bot, position.x, position.y, position.x + 20);
@@ -645,8 +656,7 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
     }
     bot.pathfinder.setMovements(new pf.Movements(bot));
     await bot.pathfinder.goto(new pf.goals.GoalNear(x, y, z, min_distance));
-    log(bot, `You have reached at ${x}, ${y}, ${z}.`);
-    return true;
+    return `You have reached at ${x}, ${y}, ${z}.`;
 }
 
 
@@ -656,21 +666,21 @@ export async function goToPlayer(bot, username, distance=3) {
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} username, the username of the player to navigate to.
      * @param {number} distance, the goal distance to the player.
-     * @returns {Promise<boolean>} true if the player was found, false otherwise.
+     * @returns {Promise<string>} true if the player was found, false otherwise.
      * @example
      * await skills.goToPlayer(bot, "player");
      **/
     bot.modes.pause('self_defense');
     let player = bot.players[username].entity
     if (!player) {
-        log(bot, `Could not find ${username}.`);
-        return false;
+        return `Could not find ${username}.`;
     }
     
     bot.pathfinder.setMovements(new pf.Movements(bot));
     await bot.pathfinder.goto(new pf.goals.GoalFollow(player, distance), true);
 
-    log(bot, `You have reached ${username}.`);
+    console.log("Returning: ", `You have reached ${username}.`);
+    return `You have reached ${username}.`;
 }
 
 
@@ -679,13 +689,13 @@ export async function followPlayer(bot, username, distance=4) {
      * Follow the given player endlessly. Will not return until the code is manually stopped.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} username, the username of the player to follow.
-     * @returns {Promise<boolean>} true if the player was found, false otherwise.
+     * @returns {Promise<string>} true if the player was found, false otherwise.
      * @example
      * await skills.followPlayer(bot, "player");
      **/
     let player = bot.players[username].entity
     if (!player)
-        return false;
+        return `A player by name ${username} does not exist`;
 
     bot.pathfinder.setMovements(new pf.Movements(bot));
     bot.pathfinder.setGoal(new pf.goals.GoalFollow(player, distance), true);
@@ -694,7 +704,7 @@ export async function followPlayer(bot, username, distance=4) {
     while (!bot.interrupt_code) {
         await new Promise(resolve => setTimeout(resolve, 500));
     }
-    return true;
+    return `You are now actively following player ${username}.`; // Is this correct? I'm not fully sure what the promise above is doing
 }
 
 
@@ -703,7 +713,7 @@ export async function moveAway(bot, distance) {
      * Move away from current position in any direction.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {number} distance, the distance to move away.
-     * @returns {Promise<boolean>} true if the bot moved away, false otherwise.
+     * @returns {Promise<string>} true if the bot moved away, false otherwise.
      * @example
      * await skills.moveAway(bot, 8);
      **/
@@ -713,15 +723,14 @@ export async function moveAway(bot, distance) {
     bot.pathfinder.setMovements(new pf.Movements(bot));
     await bot.pathfinder.goto(inverted_goal);
     let new_pos = bot.entity.position;
-    log(bot, `Moved away from nearest entity to ${new_pos}.`);
-    return true;
+    return `Moved away from nearest entity to ${new_pos}.`;
 }
 
 export async function stay(bot) {
     /**
      * Stay in the current position until interrupted. Disables all modes.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @returns {Promise<boolean>} true if the bot stayed, false otherwise.
+     * @returns {Promise<string>} true if the bot stayed, false otherwise.
      * @example
      * await skills.stay(bot);
      **/
@@ -732,7 +741,7 @@ export async function stay(bot) {
     while (!bot.interrupt_code) {
         await new Promise(resolve => setTimeout(resolve, 500));
     }
-    return true;
+    return `Successfully staying in place`;
 }
 
 
@@ -740,7 +749,7 @@ export async function goToBed(bot) {
     /**
      * Sleep in the nearest bed.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @returns {Promise<boolean>} true if the bed was found, false otherwise.
+     * @returns {Promise<string>} true if the bed was found, false otherwise.
      * @example
      * await skills.goToBed(bot);
      **/
@@ -752,8 +761,7 @@ export async function goToBed(bot) {
         count: 1
     });
     if (beds.length === 0) {
-        log(bot, `Could not find a bed to sleep in.`);
-        return false;
+        return `Could not find a bed to sleep in.`;
     }
     let loc = beds[0];
     await goToPosition(bot, loc.x, loc.y, loc.z);
@@ -764,5 +772,5 @@ export async function goToBed(bot) {
         await new Promise(resolve => setTimeout(resolve, 500));
     }
     log(bot, `You have woken up.`);
-    return true;
+    return `You have woken up.`;
 }
